@@ -1,7 +1,8 @@
-import { chatClient, streamClient } from "../lib/stream.js";
+import { chatClient, streamClient, upsertStreamUser } from "../lib/stream.js";
 import Session from "../models/Session.js";
 
 export async function createSession(req, res) {
+  let session = null;
   try {
     const { problem, difficulty } = req.body;
     const userId = req.user._id;
@@ -11,32 +12,66 @@ export async function createSession(req, res) {
       return res.status(400).json({ message: "Problem and difficulty are required" });
     }
 
+    // Ensure user exists in Stream before creating session
+    try {
+      await upsertStreamUser({
+        id: clerkId,
+        name: req.user.name,
+        image: req.user.profileImage,
+      });
+    } catch (userError) {
+      console.error("Failed to upsert user to Stream:", userError);
+      return res.status(500).json({ message: "Failed to initialize user", error: userError.message });
+    }
+
     // generate a unique call id for stream video
     const callId = `session_${Date.now()}_${Math.random().toString(36).substring(7)}`;
 
     // create session in db
-    const session = await Session.create({ problem, difficulty, host: userId, callId });
+    session = await Session.create({ problem, difficulty, host: userId, callId });
 
     // create stream video call
-    await streamClient.video.call("default", callId).getOrCreate({
-      data: {
-        created_by_id: clerkId,
-        custom: { problem, difficulty, sessionId: session._id.toString() },
-      },
-    });
+    try {
+      const callResponse = await streamClient.video.call("default", callId).getOrCreate({
+        data: {
+          created_by_id: clerkId,
+          custom: { problem, difficulty, sessionId: session._id.toString() },
+        },
+      });
+      console.log("Stream call created successfully:", callResponse);
+    } catch (streamError) {
+      console.error("Stream video call creation failed:", streamError.message);
+      console.error("Full error:", JSON.stringify(streamError, null, 2));
+      // Rollback: delete the session we just created
+      await Session.findByIdAndDelete(session._id);
+      return res.status(500).json({ message: "Failed to create room", error: streamError.message });
+    }
 
     // chat messaging
-    const channel = chatClient.channel("messaging", callId, {
-      name: `${problem} Session`,
-      created_by_id: clerkId,
-      members: [clerkId],
-    });
+    try {
+      const channel = chatClient.channel("messaging", callId, {
+        name: `${problem} Session`,
+        created_by_id: clerkId,
+        members: [clerkId],
+      });
 
-    await channel.create();
+      await channel.create();
+    } catch (chatError) {
+      console.error("Stream chat creation failed:", chatError);
+      // Rollback: delete session and video call
+      await Session.findByIdAndDelete(session._id);
+      return res.status(500).json({ message: "Failed to create chat channel", error: chatError.message });
+    }
 
     res.status(201).json({ session });
   } catch (error) {
     console.log("Error in createSession controller:", error.message);
+    // If session was created, clean it up
+    if (session) {
+      await Session.findByIdAndDelete(session._id).catch(err => 
+        console.error("Failed to cleanup session:", err)
+      );
+    }
     res.status(500).json({ message: "Internal Server Error" });
   }
 }
