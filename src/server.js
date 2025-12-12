@@ -12,11 +12,12 @@ import sessionRoutes from "./routes/sessionRoute.js";
 
 const app = express();
 
-// middleware - ORDER MATTERS!
-app.use(cors({
-  origin: ENV.CLIENT_URL, // your Vite dev server port
-  credentials: true
-}));
+app.use(
+  cors({
+    origin: true, // Reflect the request origin (allows all origins)
+    credentials: true, // Allow cookies / Authorization headers
+  })
+);
 app.use(express.json());
 app.use(clerkMiddleware());
 
@@ -38,7 +39,9 @@ app.get("/health", (req, res) => {
 const startServer = async () => {
   try {
     await connectDB();
-    app.listen(ENV.PORT, () => console.log("Server is running on port:", ENV.PORT));
+    app.listen(ENV.PORT, () =>
+      console.log("Server is running on port:", ENV.PORT)
+    );
   } catch (error) {
     console.error("💥 Error starting the server", error);
   }
