@@ -14,9 +14,23 @@ const app = express();
 
 app.use(express.json());
 
+// CORS configuration to support multiple origins
+// Supports comma-separated CLIENT_URL values in environment variables
+// Example: CLIENT_URL=http://localhost:5173,https://your-app.vercel.app
 app.use(
   cors({
-    origin: ENV.CLIENT_URL,        // reflects request origin
+    origin: (origin, callback) => {
+      // Allow requests with no origin (like mobile apps or Postman)
+      if (!origin) return callback(null, true);
+      
+      // Check if the origin is in the allowed list
+      if (ENV.CLIENT_URLS.length === 0 || ENV.CLIENT_URLS.includes(origin)) {
+        callback(null, true);
+      } else {
+        console.warn(`CORS blocked request from origin: ${origin}`);
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
     credentials: true,   // allows cookies
   })
 );
